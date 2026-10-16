@@ -62,6 +62,7 @@ img { max-width: 100%; }
   position: absolute; inset: 0; display: grid; place-items: center; z-index: 1; pointer-events: none;
   font-size: 13px; color: #9fb2c8; /* light text — legible over the dark canvas it overlays, not page chrome */
 }
+#loading[hidden] { display: none; } /* the id selector above outranks the UA [hidden] rule */
 .deck-tooltip { font-family: var(--motus-font) !important; }
 @media (max-width: 600px) {
   .map-card { padding: 10px 12px; gap: 8px; }
@@ -125,14 +126,13 @@ img { max-width: 100%; }
     </div>
     <p><span class="dot" style="background:var(--smartphone)"></span>Smartphone (Find My/Bluetooth, Blu band) — chance a finder device is in range, from population density.
     <br><span class="dot" style="background:var(--terra)"></span>Terra ground stations (FSK and Blu bands) — opacity scales with how many online stations are in the cell. Offline stations aren't shown.
-    <br><span class="dot" style="background:var(--motus)"></span>Motus receiving stations (all bands) — opacity scales with distance to the nearest active station, within the assumed range.</p>
+    <br><span class="dot" style="background:var(--motus)"></span>Motus receiving stations (all bands) — on Lotek PPM and FSK, opacity scales with distance to the nearest active station, within the assumed range; the two bands share that range, since 434 MHz antennas reach about as far as Lotek PPM. On Blu, opacity scales with how many stations are in the cell.</p>
     <div class="stats" id="stats"></div>
     <div class="stats" id="terraStats">loading terra stations…</div>
     <div class="stats" id="motusStats">loading motus stations…</div>
   </section>
 </div>
 <footer class="tool-footer">
-  <img class="tool-footer-logo tool-footer-logo-motus" src="/shared/img/motus-logo-stacked.png" alt="Motus">
   <img class="tool-footer-logo tool-footer-logo-birds-canada" src="/shared/img/birds-canada-logo-stacked.png" alt="Birds Canada">
 </footer>
 
@@ -146,7 +146,7 @@ const CELLS = "c2e34b 62.4;c2c497 14.2;c2c487 13.2;c2c4b3 15.3;c2e34f 50.4;c2e34
 
 const data = CELLS.split(";").map(r => { const [k, v] = r.split(" "); return ["85" + k + "fffffff", +v]; });
 let RANGE_M = 30;          // Smartphone (Blu) assumed Bluetooth range
-let MOTUS_RADIUS_KM = 20;  // Motus (Lotek PPM) assumed detection radius
+let MOTUS_RADIUS_KM = 20;  // Motus assumed detection radius — same for Lotek PPM and 434 MHz FSK
 let band = "lotek";        // "lotek" | "fsk" | "blu"
 let networksOn = { motus: true, terra: true, smartphone: true };
 
@@ -159,8 +159,8 @@ function rampRGB(p) {
 }
 const coverage = (d, r = RANGE_M) => 1 - Math.exp(-d * Math.PI * (r / 1000) ** 2);
 // Stations are discrete known points, not a density model, so their overlays work differently from the
-// ramp above: a cell's count (terra, motus on FSK/Blu) or nearest-station distance fraction (motus on
-// Lotek PPM, whose radius can span several hexes) sets the opacity, using the same power-curve shape.
+// ramp above: a cell's count (terra, motus on Blu) or nearest-station distance fraction (motus on Lotek
+// PPM and FSK, whose radius can span several hexes) sets the opacity, using the same power-curve shape.
 const TERRA_RGB = [255, 214, 10];
 const MOTUS_RGB = [57, 217, 138];
 const STATION_CAP = 3; // cell opacity reaches full by this many stations of a network in one hex
@@ -188,11 +188,11 @@ function colour(hexId, d) {
     if (n) c = over(c, [...TERRA_RGB, Math.round(255 * countAlphaOf(n))]);
   }
   if (networksOn.motus) {
-    if (band === "lotek") {
-      const frac = motusLotekMap(MOTUS_RADIUS_KM).get(hexId);
+    if (MOTUS_RADIUS_BANDS.has(band)) {
+      const frac = motusCoverageMap(band, MOTUS_RADIUS_KM).get(hexId);
       if (frac) c = over(c, [...MOTUS_RGB, Math.round(255 * fracAlphaOf(frac))]);
     } else {
-      const n = motusByHexSmall[band].get(hexId);
+      const n = motusBluByHex.get(hexId);
       if (n) c = over(c, [...MOTUS_RGB, Math.round(255 * countAlphaOf(n))]);
     }
   }
@@ -254,17 +254,19 @@ function applyTerra(stations) {
 }
 
 // --- Motus stations: real receiving-station locations, grouped by the antenna frequency active there. ---
-// Lotek PPM's assumed radius can span several hex widths, so it needs an actual radius search; FSK and
-// Blu are assumed sub-hex-scale, so (like terra) each station just lights its own cell.
+// Lotek PPM and 434 MHz FSK antennas reach comparable distances, so both get the same assumed radius,
+// which can span several hex widths and needs an actual radius search. Blu is assumed sub-hex-scale, so
+// (like terra) each Blu station just lights its own cell.
 const MOTUS_STATIONS_API = "https://motus.b-cdn.net/data/dashboard/stations.json?";
 const MOTUS_DEPLOYMENTS_API = "https://motus.b-cdn.net/data/dashboard/stationDeployments.json?";
 const MOTUS_ANTENNAS_API = "https://motus.b-cdn.net/data/dashboard/antennaDeployments.json?";
 const MOTUS_BAND_OF_FREQ = { 166.38: "lotek", 150.1: "lotek", 151.5: "lotek", 434: "fsk", 2400: "blu" };
 let motusPoints = { lotek: [], fsk: [], blu: [] }; // [lat, lon] of active stations per band
-let motusByHexSmall = { fsk: new Map(), blu: new Map() };
-let motusLotekCache = new Map(); // radius km -> Map(hex -> nearest-station distance fraction)
+let motusBluByHex = new Map();   // h3 (res 5) -> count of active Blu stations in that cell
+let motusRadiusCache = new Map(); // `${band}|${radius km}` -> Map(hex -> nearest-station distance fraction)
 let motusVersion = 0;
-const MOTUS_LOTEK_RADII = [10, 20, 40]; // every selectable Lotek PPM range
+const MOTUS_RADIUS_BANDS = new Set(["lotek", "fsk"]); // bands modelled by radius rather than own-hex
+const MOTUS_RADII = [10, 20, 40]; // every selectable radius for those bands
 
 const bucketOwnHex = points => points.reduce((m, [lat, lon]) => {
   const h = h3.latLngToCell(lat, lon, 5);
@@ -287,9 +289,10 @@ function stationCoverageMap(points, radiusKm) {
   }
   return out;
 }
-function motusLotekMap(radiusKm) {
-  if (!motusLotekCache.has(radiusKm)) motusLotekCache.set(radiusKm, stationCoverageMap(motusPoints.lotek, radiusKm));
-  return motusLotekCache.get(radiusKm);
+function motusCoverageMap(band, radiusKm) {
+  const key = `${band}|${radiusKm}`;
+  if (!motusRadiusCache.has(key)) motusRadiusCache.set(key, stationCoverageMap(motusPoints[band], radiusKm));
+  return motusRadiusCache.get(key);
 }
 
 function applyMotus(stations, deployments, antennas) {
@@ -307,8 +310,8 @@ function applyMotus(stations, deployments, antennas) {
     byBand[band].set(st.stationID, [st.latitude, st.longitude]);
   }
   motusPoints = Object.fromEntries(Object.entries(byBand).map(([k, v]) => [k, [...v.values()]]));
-  motusByHexSmall = { fsk: bucketOwnHex(motusPoints.fsk), blu: bucketOwnHex(motusPoints.blu) };
-  motusLotekCache = new Map();
+  motusBluByHex = bucketOwnHex(motusPoints.blu);
+  motusRadiusCache = new Map();
   motusVersion++;
   rebuildHexDataUnion();
 }
@@ -322,9 +325,8 @@ function applyMotus(stations, deployments, antennas) {
 function rebuildHexDataUnion() {
   const keys = new Set();
   for (const h of terraByHex.keys()) keys.add(h);
-  for (const h of motusByHexSmall.fsk.keys()) keys.add(h);
-  for (const h of motusByHexSmall.blu.keys()) keys.add(h);
-  for (const r of MOTUS_LOTEK_RADII) for (const h of motusLotekMap(r).keys()) keys.add(h);
+  for (const h of motusBluByHex.keys()) keys.add(h);
+  for (const b of MOTUS_RADIUS_BANDS) for (const r of MOTUS_RADII) for (const h of motusCoverageMap(b, r).keys()) keys.add(h);
   const extra = [...keys].filter(h => !dataIndex.has(h)).map(h => [h, 0]);
   hexData = extra.length ? data.concat(extra) : data;
 }
@@ -368,11 +370,11 @@ const app = new deck.Deck({
       if (n) lines.push(`<span style="color:#ffd60a">● ${n} online terra station${n > 1 ? "s" : ""}</span>`);
     }
     if (networksOn.motus) {
-      if (band === "lotek") {
-        const frac = motusLotekMap(MOTUS_RADIUS_KM).get(object[0]);
+      if (MOTUS_RADIUS_BANDS.has(band)) {
+        const frac = motusCoverageMap(band, MOTUS_RADIUS_KM).get(object[0]);
         if (frac) lines.push(`<span style="color:#39d98a">● nearest Motus station ≈ ${Math.round((1 - frac) * MOTUS_RADIUS_KM)} km away</span>`);
       } else {
-        const n = motusByHexSmall[band].get(object[0]);
+        const n = motusBluByHex.get(object[0]);
         if (n) lines.push(`<span style="color:#39d98a">● ${n} active Motus station${n > 1 ? "s" : ""}</span>`);
       }
     }
@@ -384,8 +386,10 @@ const app = new deck.Deck({
 
 const press = (sel, b) => document.querySelectorAll(sel).forEach(o => o.setAttribute("aria-pressed", o === b));
 
+const MOTUS_RANGE_OPTION = { unit: "km", values: MOTUS_RADII, get: () => MOTUS_RADIUS_KM, set: v => MOTUS_RADIUS_KM = v };
 const RANGE_OPTIONS = {
-  lotek: { unit: "km", values: MOTUS_LOTEK_RADII, get: () => MOTUS_RADIUS_KM, set: v => MOTUS_RADIUS_KM = v },
+  lotek: MOTUS_RANGE_OPTION,
+  fsk: MOTUS_RANGE_OPTION,
   blu: { unit: "m", values: [15, 30, 60], get: () => RANGE_M, set: v => RANGE_M = v }
 };
 function renderRangeRow() {
