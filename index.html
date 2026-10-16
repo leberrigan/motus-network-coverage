@@ -1,87 +1,140 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Estimated Motus Tag Coverage</title>
+<link rel="icon" href="/shared/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/shared/motus-tools.css">
 <style>
-/* Layout: full-bleed deck.gl canvas; one control card floats top-left. */
+html { height: 100%; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { height: 100%; }
+img { max-width: 100%; }
+
+/* Layout: the shared header/footer bracket a full-bleed deck.gl canvas,
+   with one control card floating top-left over the map. The map's own
+   basemap (ocean/land/hex-overlay colors, set in the script below) stays
+   dark — that's the visualization's content, not page chrome — but the
+   floating card and everything around it use the shared Motus tokens/
+   components (see /shared/motus-tools.css) instead of a bespoke theme. */
 :root {
   --space: #04070c;
-  --panel: rgba(9, 16, 26, 0.88);
-  --line: rgba(160, 196, 235, 0.16);
-  --fg: #e6eef8;
-  --fg-2: #9fb2c8;
-  --fg-3: #6b7f96;
-  --accent: #5fb4f0;
+  /* Legend/data colors — --terra and --motus match literal RGB constants
+     used by the deck.gl layers below (TERRA_RGB, MOTUS_RGB), so they stay
+     fixed hex rather than brand tokens; --smartphone has no equivalent JS
+     constant (the Find My ramp is its own multi-stop gradient) and is
+     just kept close to that ramp's hue for the legend dot. */
+  --smartphone: #5fb4f0;
   --terra: #ffd60a;
   --motus: #39d98a;
-  --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
-  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  color-scheme: dark;
 }
-html, body { height: 100%; margin: 0; }
-body { background: var(--space); color: var(--fg); font-family: var(--font-body); overflow: hidden; }
+#deckWrap { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--space); }
 #deck { position: absolute; inset: 0; }
-.card {
+.map-card {
   position: absolute; top: 16px; left: 16px; z-index: 2; width: min(340px, calc(100% - 32px));
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
-  display: grid; gap: 12px; backdrop-filter: blur(6px); box-sizing: border-box;
+  display: grid; gap: 12px; max-height: calc(100% - 32px); overflow: auto;
 }
-.eyebrow { font: 500 11px/1 var(--font-data); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
-h1 { margin: 0; font: 760 22px/1.1 var(--font-body); font-stretch: 80%; text-wrap: balance; }
-p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); }
-code { font-family: var(--font-data); font-size: 11.5px; color: var(--fg); }
-.row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--fg-2); }
+.map-card h1 { font-size: 1.1rem; margin: 0; }
+.map-card .eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--motus-muted); }
+.map-card p { margin: 0; font-size: 12.5px; color: var(--motus-muted); }
+.row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--motus-muted); }
 .row .lbl { min-width: 46px; }
-.btn {
-  font: 600 12px/1 var(--font-body); color: var(--fg); background: rgba(95,180,240,.12);
-  border: 1px solid rgba(95,180,240,.35); border-radius: 6px; padding: 6px 10px; cursor: pointer;
+.map-card .btn {
+  font-weight: 600; font-size: 12px; padding: 6px 10px; box-shadow: none;
+  background: var(--motus-white); border: 1px solid var(--motus-border); color: var(--motus-dark);
 }
-.btn:hover { background: rgba(95,180,240,.22); }
-.btn[aria-pressed="true"] { background: var(--accent); color: #04121f; border-color: var(--accent); }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.btn[data-irrelevant="true"] { opacity: .4; }
+.map-card .btn:hover { border-color: var(--motus-primary); color: var(--motus-primary); box-shadow: none; }
+.map-card .btn[aria-pressed="true"] { background: var(--motus-primary); color: var(--motus-white); border-color: var(--motus-primary); }
+.map-card .btn:focus-visible { outline: 2px solid var(--motus-primary); outline-offset: 2px; }
+.map-card .btn[data-irrelevant="true"] { opacity: .45; }
 .scale { display: grid; gap: 3px; }
 .bar { height: 8px; border-radius: 2px; }
-.ticks { position: relative; height: 12px; font: 10px/1 var(--font-data); color: var(--fg-3); }
+.ticks { position: relative; height: 12px; font-size: 10px; color: var(--motus-muted); }
 .ticks span { position: absolute; transform: translateX(-50%); }
 .ticks span:first-child { transform: none; }
 .ticks span:last-child { transform: translateX(-100%); }
-.stats { font: 11px/1.4 var(--font-data); color: var(--fg-3); }
+.stats { font-size: 11px; line-height: 1.4; color: var(--motus-muted); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
-#loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fg-2); font: 13px var(--font-data); z-index: 1; pointer-events: none; }
-.deck-tooltip { font-family: var(--font-body) !important; }
-@media (max-width: 600px) { .card { padding: 10px 12px; gap: 8px; } h1 { font-size: 18px; } .card > p { display: none; } }
+#loading {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 1; pointer-events: none;
+  font-size: 13px; color: #9fb2c8; /* light text — legible over the dark canvas it overlays, not page chrome */
+}
+.deck-tooltip { font-family: var(--motus-font) !important; }
+@media (max-width: 600px) {
+  .map-card { padding: 10px 12px; gap: 8px; }
+  .map-card h1 { font-size: 1rem; }
+  .map-card > p { display: none; }
+}
 </style>
-
-<div id="deck"></div>
-<div id="loading">Building hexagons…</div>
-<section class="card">
-  <div class="eyebrow">deck.gl · H3HexagonLayer · resolution 5</div>
-  <h1>Estimated Motus tag coverage</h1>
-  <p>Modelled detection coverage for Motus-tagged wildlife, by radio band. Three networks can contribute: Motus receiving stations, terra ground stations, and the Find My smartphone population. Pick a band, then toggle which networks count toward it.</p>
-  <div class="row" role="group" aria-label="Frequency band"><span class="lbl">Band</span>
-    <button class="btn" data-band="lotek" aria-pressed="true">Lotek PPM</button><button class="btn" data-band="fsk">FSK</button><button class="btn" data-band="blu">Blu</button>
-  </div>
-  <div class="row" role="group" aria-label="Contributing networks"><span class="lbl">Networks</span>
-    <button class="btn" id="netMotus" data-net="motus" aria-pressed="true">Motus</button><button class="btn" id="netTerra" data-net="terra" aria-pressed="true">Terra</button><button class="btn" id="netSmartphone" data-net="smartphone" aria-pressed="true">Smartphone</button>
-  </div>
-  <div class="scale">
-    <div class="bar" id="bar"></div>
-    <div class="ticks" id="ticks"></div>
-  </div>
-  <div class="row" id="rangeRow" role="group" aria-label="Assumed range"><span class="lbl" id="rangeLabel">Range</span><span id="rangeButtons"></span>
-  </div>
-  <div class="row" role="group" aria-label="View"><span class="lbl">View</span>
-    <button class="btn" data-view="globe" aria-pressed="true">Globe</button><button class="btn" data-view="map">Map</button>
-    <button class="btn" id="csv" style="margin-left:auto">Download CSV</button>
-  </div>
-  <p><span class="dot" style="background:var(--accent)"></span>Smartphone (Find My/Bluetooth, Blu band) — chance a finder device is in range, from population density.
-  <br><span class="dot" style="background:var(--terra)"></span>Terra ground stations (FSK and Blu bands) — opacity scales with how many online stations are in the cell. Offline stations aren't shown.
-  <br><span class="dot" style="background:var(--motus)"></span>Motus receiving stations (all bands) — opacity scales with distance to the nearest active station, within the assumed range.</p>
-  <div class="stats" id="stats"></div>
-  <div class="stats" id="terraStats">loading terra stations…</div>
-  <div class="stats" id="motusStats">loading motus stations…</div>
-</section>
+</head>
+<body>
+<header class="motus-header">
+  <nav class="navbar">
+    <a class="navbar-brand" href="https://motus.org" target="_blank" rel="noopener">
+      <img class="navbar-brand-logo" src="/shared/img/motus-logo-horizontal.png" alt="Motus">
+    </a>
+    <ul class="nav">
+      <li class="nav-item"><a class="nav-link navbar-tools-link" href="/">Tools</a></li>
+      <li class="nav-item dropdown" id="navbar-crumb-item">
+        <a class="nav-link navbar-crumb dropdown-toggle" href="#" id="navbar-crumb-toggle">Network Coverage</a>
+        <ul class="dropdown-menu" id="navbar-crumb-menu"></ul>
+      </li>
+    </ul>
+  </nav>
+  <nav class="navbar navbar-account">
+    <ul class="nav">
+      <li class="nav-item" id="motus-signin-item">
+        <a class="navbar-signin-link" href="/oauth2/sign_in?rd=/">Sign in</a>
+      </li>
+      <li class="nav-item dropdown" id="motus-account-item" style="display:none">
+        <a class="nav-link dropdown-toggle" href="#" id="motus-account-toggle"></a>
+        <ul class="dropdown-menu">
+          <li><a class="dropdown-item" id="tool-header-admin-link" href="/user-management/" style="display:none">Users</a></li>
+          <li><a class="dropdown-item" href="/oauth2/sign_out?rd=/">Sign out</a></li>
+        </ul>
+      </li>
+    </ul>
+    <img class="navbar-logo-birds-canada" src="/shared/img/birds-canada-logo-horizontal.png" alt="Birds Canada">
+  </nav>
+</header>
+<div id="deckWrap">
+  <div id="deck"></div>
+  <div id="loading">Building hexagons…</div>
+  <section class="card map-card">
+    <div class="eyebrow">deck.gl · H3HexagonLayer · resolution 5</div>
+    <h1>Estimated Motus tag coverage</h1>
+    <p>Modelled detection coverage for Motus-tagged wildlife, by radio band. Three networks can contribute: Motus receiving stations, terra ground stations, and the Find My smartphone population. Pick a band, then toggle which networks count toward it.</p>
+    <div class="row" role="group" aria-label="Frequency band"><span class="lbl">Band</span>
+      <button class="btn" data-band="lotek" aria-pressed="true">Lotek PPM</button><button class="btn" data-band="fsk">FSK</button><button class="btn" data-band="blu">Blu</button>
+    </div>
+    <div class="row" role="group" aria-label="Contributing networks"><span class="lbl">Networks</span>
+      <button class="btn" id="netMotus" data-net="motus" aria-pressed="true">Motus</button><button class="btn" id="netTerra" data-net="terra" aria-pressed="true">Terra</button><button class="btn" id="netSmartphone" data-net="smartphone" aria-pressed="true">Smartphone</button>
+    </div>
+    <div class="scale">
+      <div class="bar" id="bar"></div>
+      <div class="ticks" id="ticks"></div>
+    </div>
+    <div class="row" id="rangeRow" role="group" aria-label="Assumed range"><span class="lbl" id="rangeLabel">Range</span><span id="rangeButtons"></span>
+    </div>
+    <div class="row" role="group" aria-label="View"><span class="lbl">View</span>
+      <button class="btn" data-view="globe" aria-pressed="true">Globe</button><button class="btn" data-view="map">Map</button>
+      <button class="btn" id="csv" style="margin-left:auto">Download CSV</button>
+    </div>
+    <p><span class="dot" style="background:var(--smartphone)"></span>Smartphone (Find My/Bluetooth, Blu band) — chance a finder device is in range, from population density.
+    <br><span class="dot" style="background:var(--terra)"></span>Terra ground stations (FSK and Blu bands) — opacity scales with how many online stations are in the cell. Offline stations aren't shown.
+    <br><span class="dot" style="background:var(--motus)"></span>Motus receiving stations (all bands) — opacity scales with distance to the nearest active station, within the assumed range.</p>
+    <div class="stats" id="stats"></div>
+    <div class="stats" id="terraStats">loading terra stations…</div>
+    <div class="stats" id="motusStats">loading motus stations…</div>
+  </section>
+</div>
+<footer class="tool-footer">
+  <img class="tool-footer-logo tool-footer-logo-motus" src="/shared/img/motus-logo-stacked.png" alt="Motus">
+  <img class="tool-footer-logo tool-footer-logo-birds-canada" src="/shared/img/birds-canada-logo-stacked.png" alt="Birds Canada">
+</footer>
 
 <script src="https://unpkg.com/h3-js@4.4.0/dist/h3-js.umd.js"></script>
 <script src="https://unpkg.com/deck.gl@9.3.11/dist.min.js"></script>
@@ -146,7 +199,7 @@ function colour(hexId, d) {
   return c || [0, 0, 0, 0];
 }
 
-document.getElementById("bar").style.background = `linear-gradient(90deg, ${Array.from({ length: 51 }, (_, i) => { const p = i / 50, [r, g, b] = rampRGB(p); return `rgba(${r},${g},${b},${alphaOf(p).toFixed(3)})`; }).join(",")}), #161f2a`;
+document.getElementById("bar").style.background = `linear-gradient(90deg, ${Array.from({ length: 51 }, (_, i) => { const p = i / 50, [r, g, b] = rampRGB(p); return `rgba(${r},${g},${b},${alphaOf(p).toFixed(3)})`; }).join(",")}), var(--motus-light)`;
 document.getElementById("ticks").innerHTML = [0, 25, 50, 75, 100].map(v => `<span style="left:${v}%">${v}%</span>`).join("");
 document.getElementById("stats").textContent = `Smartphone — ${data.length.toLocaleString()} cells · 1.9 billion finder devices (est.)`;
 
@@ -396,5 +449,5 @@ Promise.all([MOTUS_STATIONS_API, MOTUS_DEPLOYMENTS_API, MOTUS_ANTENNAS_API].map(
     app.setProps({ layers: layers() });
   }).catch(() => { document.getElementById("motusStats").textContent = "Motus stations: failed to load"; });
 </script>
-
+<script src="/shared/motus-account.js"></script>
 </body></html>
